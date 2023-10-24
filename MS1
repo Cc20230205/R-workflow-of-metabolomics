@@ -1,2 +1,18 @@
-#understanding of data#
-First of all, 
+#Understanding of data#
+First of all, we have to know that raw data of MS/MS anlaysis can not be analyzed by R directly.
+Usually, when you open the raw data, you can find profile MS data, like total ion chromatogram (TIC). But the profile MS data can not be recognized by R.
+In fact, R can recognize centriod MS data, so raw data must be converted into centriod data prior to do anlayze with R.
+Generally, centriod MS data is a three-dimensional bar diagram, like a bar diagram with X, Y, Z axis. 
+X axis indicates retention time (rt), 
+Y axis indicates mass to charge (mz),
+Z axis indicates intensity.
+Ideally, different MS1 has different rt, so we could separate each MS1 by comparing their rt.
+
+#Conversion of data format#
+Different machine leads to different data format. Please check it before starting your conversion of data format.
+Taking Q Exactive Orbitrap Mass Spectrometers (MS) as an example. Mscovert is used to transform raw data into mzML data format by adding peak picking option.
+Mscovert could be downloaded in ProteoWizard (https://proteowizard.sourceforge.io/)
+
+#packages and code#
+
+
