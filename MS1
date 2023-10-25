@@ -8,15 +8,83 @@ Y axis indicates mass to charge (mz),
 Z axis indicates intensity.
 Ideally, different MS1 has different rt, so we could separate each MS1 by comparing their rt.
 
+
 #Conversion of data format#
 Different machine leads to different data format. Please check it before starting your conversion of data format.
 Taking Q Exactive Orbitrap Mass Spectrometers (MS) as an example. Mscovert is used to transform raw data into mzML data format by adding peak picking option.
 Mscovert could be downloaded in ProteoWizard (https://proteowizard.sourceforge.io/)
 
+
 #packages and code#
 Note: this code refers to
 "Assigning precursor–product ion relationships in indiscriminant MS/MS data from non-targeted metabolite profiling studies. Broeckling et al. Metabolomics, 2013."
 "Navigating natural variation in herbivory-induced secondary metabolism in coyote tobacco populations using MS/MS structural analysis. Li et al. PNAS, 2015."
+
+setwd("D:/Rdata")
+library(xcms)
+library(CAMERA)
+
+dataset<-list.files(path="GA", pattern="mzML", recursive = FALSE, full.names = TRUE)
+#set up dataset
+dataset
+
+xset<-xcmsSet(dataset, method = "centWave", mslevel = 1, ppm=15, peakwidth=c(1:30), snthresh=10)
+#peak picking
+#parameters：
+  #method: choose the way of chromatographic peak detection, here we choose centWave
+  #mslevel: choose ms level, here 1 means MS1 level
+  #peakwidth: set the width of a peak, here I set the peakwidth as 1 to 30s. Be careful to the number, which is quite important for the result.
+  #snthresh: set the signal to noise ratio cutoff
+xset
+gc()
+
+xset1 <- group(xset, method="density", minfrac=0.3, minsamp=1, bw=10, mzwid=0.01, sleep=0.001)
+#peak grouping
+#parameters：
+  #method: choose the way of peak grouping, here we choose density, so peak grouping will be done based on time dimension peak densities
+xset1
+gc()
+
+xset2 <- retcor(xset1, family= "s", plottype= "m", missing=1, extra=1, span=1)
+#Ret time correction
+#parameters：
+  #family: defining the method to be used for loess smoothing. Allowed values are "gaussian" and "symmetric"
+#sometimes the code leads to error, so we could use the following codes:
+xset2<-retcor(xset1,method="obiwarp",profStep=0.1,plottype="deviation") 
+or
+xset2<-retcor(xset1,method="obiwarp",profStep=0.9,plottype="deviation") 
+xset2
+gc()
+
+xset3 <- group(xset2, method="density", mzwid=0.01, sleep=0.001, minfrac=0.3, minsamp=1, bw=5)
+#regroup peaks following Rt correction
+xset3
+gc()
+
+xset4 <- fillPeaks(xset3)
+#filling missing peak areas
+xset4
+gc()
+
+an <- xsAnnotate(xset4)
+#It extracts the peaktable from a provided xcmsSet, which is used for all further analysis
+
+anF <- groupFWHM(an, perfwhm = 0.6)
+#grouping by retention time, starting from most abundant feature
+anF
+gc()
+
+anI <- findIsotopes(anF, mzabs=0.01)
+#Annotate isotope peaks for a xsAnnotate object. Returns a xsAnnotate object with annotated isotopes
+
+anIC <- groupCorr(anI, cor_eic_th=0.75)
+#Peak grouping after correlation information into pseudospectrum groups for an xsAnnotate object. Return an xsAnnotate object with grouping information
+
+anFA <- findAdducts(anIC, polarity="negative")
+#Annotate adducts (and fragments) for a xsAnnotate object. Returns a xsAnnotate object with annotated pseudospectra
+
+write.csv(getPeaklist(anFA), file="GA.csv")
+#Extract all information from an xsAnnotate object. Returns a peaklist with annotated peaks
 
 
 
