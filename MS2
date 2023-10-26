@@ -1,2 +1,89 @@
-#this part is named MS2 since the purpose of it is to get MS2 spectrum derived from each MS1#
+#this file is named MS2 since the purpose of it is to get MS2 spectrum derived from each MS1#
 
+
+#Understanding of data#
+First of all, we have to know that raw data of MS/MS anlaysis can not be analyzed by R directly.
+Usually, when you open the raw data, you can find profile MS data, like total ion chromatogram (TIC). But the profile MS data can not be recognized by R.
+In fact, R can recognize centriod MS data, so raw data must be converted into centriod data prior to do anlayze with R.
+Generally, centriod MS data is a three-dimensional bar diagram, like a bar diagram with X, Y, Z axis. 
+X axis indicates retention time (rt), 
+Y axis indicates mass to charge (mz),
+Z axis indicates intensity.
+Ideally, different MS1 has different rt, so we could separate each MS1 by comparing their rt.
+
+
+#Conversion of data format#
+Different machine leads to different data format. Please check it before starting your conversion of data format.
+Taking Q Exactive Orbitrap Mass Spectrometers (MS) as an example. Mscovert is used to transform raw data into mzML data format by adding peak picking option.
+Mscovert could be downloaded in ProteoWizard (https://proteowizard.sourceforge.io/)
+
+
+#packages and code#
+Note: this code almost completely comes from Dr. Johannes Rainer but some changes. Therefore, if you want to study it seriously, seeing his version is essential.
+The following is the links about his version for this code:
+1) https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms.html#LC-MS_data_pre-processing_and_analysis_with_xcms
+2) https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms-lcms-ms.html#LC-MSMS_data_analysis_with_xcms
+
+setwd("D:/Rdata")
+library("MSnbase")
+library(xcms)
+library("magrittr")
+library(pheatmap)
+library(RColorBrewer)
+library(SummarizedExperiment)
+library(Spectra)
+
+raw_data <- readMSData("./GA/leaf.mzML", mode = "onDisk")
+#here we just input one sample called leaf. In spite of we could also input several samples at the same time, it would not be helpful for getting MS2 spectrum
+as much as possible.
+
+raw_data <- filterRt(raw_data, c(120, 3500))
+#you can also select a range of time
+
+table(msLevel(raw_data))
+#check the number of spectra for each MS level
+
+cwp <- CentWaveParam(snthresh = 5, noise = 100, ppm = 10, peakwidth = c(1, 30))
+#snthresh -- 定义峰检测时信噪比阈值
+#noise --设置在第一个分析步骤中考虑的质心所需的最小强度(强度<噪声的将从ROI检测中忽略)
+#peakwidth -- 定义峰检测时峰宽范围，类似色谱峰的峰宽，该参数指定每个峰峰宽的最大值和最小值，以秒为单位
+#ppm -- 定义峰检测时连续扫描的m/z最大允许偏差，以ppm（parts per million）为单位
+
+dda_data=findChromPeaks(raw_data, param = cwp)
+#提取色谱峰峰
+dda_data@msFeatureData[["chromPeaks"]] %>% head()
+#查看峰表
+dda_data@msFeatureData[["chromPeaks"]] %>% nrow()
+#查看峰数量
+
+mpp <- MergeNeighboringPeaksParam(expandRt = 4)
+#设置合并峰的参数
+#expandRt将保留时间窗口向两边扩展多少秒
+#minProp, 数值在0-1之间，表示峰连接所需的强度比例。 默认(minProp = 0.75)表示只有当信号的中间部分大于两个峰值的“maxo”(峰值顶点的最大强度)中最小值的75%时，峰值才会连接
+xdata_pp <- refineChromPeaks(dda_data, mpp)
+#合并峰
+
+xdata <- xdata_pp
+xdata <- adjustRtime(xdata, param = ObiwarpParam(binSize = 0.6))
+#峰对齐
+
+pdp <- PeakDensityParam(sampleGroups = xdata$sample_group, minFraction = 0.4, bw = 30)
+#####################################################################################################
+pdp <- PeakDensityParam(sampleGroups = c(1), minFraction = 0.4, bw = 30)
+#单个数据输入
+#####################################################################################################
+xdata_group <- groupChromPeaks(xdata, param = pdp)
+#峰分组
+
+xdata_fill <- fillChromPeaks(xdata_group, param = ChromPeakAreaParam())
+#填充峰
+
+#####################################################################################################
+dda_spectra <- chromPeakSpectra(xdata_fill, method = "closest_rt")
+#提取MS2谱图
+write.csv(dda_spectra %>% filterMsLevel(2L) %>% precursorMz(), file = "XYR_0203_precursorMz.csv")
+#提取所有谱图的precursor
+write.csv(dda_spectra %>% filterMsLevel(2L) %>% rtime(), file = "XYR_0203_rtime.csv")
+#提取所有谱图precursor的retention time
+writeMgfData(dda_spectra, con = "XYR_0203_spectra.mgf", COM = NULL, TITLE = NULL)
+#提取所有谱图的mz和rt数据
