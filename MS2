@@ -1,4 +1,4 @@
-#this file is named MS2 since the purpose of it is to get MS2 spectrum derived from each MS1#
+#this file is named MS2 since the role of it is to get MS2 spectrum derived from each MS1#
 
 
 #Understanding of data#
@@ -25,12 +25,8 @@ The following is the links about his version for this code:
 2) https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms-lcms-ms.html#LC-MSMS_data_analysis_with_xcms
 
 setwd("D:/Rdata")
-library("MSnbase")
 library(xcms)
 library("magrittr")
-library(pheatmap)
-library(RColorBrewer)
-library(SummarizedExperiment)
 library(Spectra)
 
 raw_data <- readMSData("./GA/leaf.mzML", mode = "onDisk")
@@ -38,13 +34,15 @@ raw_data <- readMSData("./GA/leaf.mzML", mode = "onDisk")
 as much as possible.
 
 raw_data <- filterRt(raw_data, c(120, 3500))
-#you can also select a range of time
+raw_data <- filterMz(raw_data, c(120, 500))
+#you can also select a range of time or mz
 
 table(msLevel(raw_data))
 #check the number of spectra for each MS level
 
-cwp <- CentWaveParam(snthresh = 5, noise = 100, ppm = 10, peakwidth = c(1, 30))
-#snthresh -- 定义峰检测时信噪比阈值
+cwp <- CentWaveParam(snthresh = 5, noise = 100, ppm = 10, peakwidth = c(3, 30))
+#parameters:
+  #snthresh -- 定义峰检测时信噪比阈值
 #noise --设置在第一个分析步骤中考虑的质心所需的最小强度(强度<噪声的将从ROI检测中忽略)
 #peakwidth -- 定义峰检测时峰宽范围，类似色谱峰的峰宽，该参数指定每个峰峰宽的最大值和最小值，以秒为单位
 #ppm -- 定义峰检测时连续扫描的m/z最大允许偏差，以ppm（parts per million）为单位
