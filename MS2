@@ -42,46 +42,82 @@ table(msLevel(raw_data))
 
 cwp <- CentWaveParam(snthresh = 5, noise = 100, ppm = 10, peakwidth = c(3, 30))
 #parameters:
-  #snthresh -- 定义峰检测时信噪比阈值
-#noise --设置在第一个分析步骤中考虑的质心所需的最小强度(强度<噪声的将从ROI检测中忽略)
-#peakwidth -- 定义峰检测时峰宽范围，类似色谱峰的峰宽，该参数指定每个峰峰宽的最大值和最小值，以秒为单位
-#ppm -- 定义峰检测时连续扫描的m/z最大允许偏差，以ppm（parts per million）为单位
+  #snthresh: set the signal to noise ratio cutoff 
+  #peakwidth: set the width of a peak, here I set the peakwidth as 3 to 30s. Be careful to the number, which is quite important for the result.
 
 dda_data=findChromPeaks(raw_data, param = cwp)
-#提取色谱峰峰
+#extract peaks
 dda_data@msFeatureData[["chromPeaks"]] %>% head()
-#查看峰表
+#look at the peaklist
 dda_data@msFeatureData[["chromPeaks"]] %>% nrow()
-#查看峰数量
+#check the number of peaks
 
 mpp <- MergeNeighboringPeaksParam(expandRt = 4)
-#设置合并峰的参数
-#expandRt将保留时间窗口向两边扩展多少秒
-#minProp, 数值在0-1之间，表示峰连接所需的强度比例。 默认(minProp = 0.75)表示只有当信号的中间部分大于两个峰值的“maxo”(峰值顶点的最大强度)中最小值的75%时，峰值才会连接
+#set the parameters of integrating peak
+  #expandRt: expand peakwidth of peak-extracting
+
 xdata_pp <- refineChromPeaks(dda_data, mpp)
-#合并峰
+#integrate peaks
 
 xdata <- xdata_pp
-xdata <- adjustRtime(xdata, param = ObiwarpParam(binSize = 0.6))
-#峰对齐
 
-pdp <- PeakDensityParam(sampleGroups = xdata$sample_group, minFraction = 0.4, bw = 30)
-#####################################################################################################
 pdp <- PeakDensityParam(sampleGroups = c(1), minFraction = 0.4, bw = 30)
-#单个数据输入
-#####################################################################################################
+#set the parameters of peak-grouping
+
 xdata_group <- groupChromPeaks(xdata, param = pdp)
-#峰分组
+#group peaks
 
 xdata_fill <- fillChromPeaks(xdata_group, param = ChromPeakAreaParam())
-#填充峰
+#fill peaks
 
-#####################################################################################################
 dda_spectra <- chromPeakSpectra(xdata_fill, method = "closest_rt")
-#提取MS2谱图
-write.csv(dda_spectra %>% filterMsLevel(2L) %>% precursorMz(), file = "XYR_0203_precursorMz.csv")
-#提取所有谱图的precursor
-write.csv(dda_spectra %>% filterMsLevel(2L) %>% rtime(), file = "XYR_0203_rtime.csv")
-#提取所有谱图precursor的retention time
-writeMgfData(dda_spectra, con = "XYR_0203_spectra.mgf", COM = NULL, TITLE = NULL)
-#提取所有谱图的mz和rt数据
+#extract MS2 spectra
+  #method: choose the method of extracting MS2 spectra. Be careful of the parameter, it's very important.
+
+write.csv(dda_spectra %>% filterMsLevel(2L) %>% precursorMz(), file = "all_precursorMz.csv")
+#extract all precursors of these spectra
+write.csv(dda_spectra %>% filterMsLevel(2L) %>% rtime(), file = "all_rtime.csv")
+#extract all retention time of these precursors
+writeMgfData(dda_spectra, con = "all_spectra.mgf", COM = NULL, TITLE = NULL)
+#extract all spectra
+
+#############################################################################################################
+Basic analysis of MS data
+#############################################################################################################
+#extract BPC and plot
+bpis_adj <- chromatogram(xdata, aggregationFun = "max", include = "none")
+par(mfrow = c(1, 1))
+group_colors=c("grey", "red", "grey", "grey")
+plot(bpis_adj, col = group_colors[bpis_adj$sample_group])
+plot(bpis_adj, col = c("grey", "red", "grey", "grey"))
+legend(x = 'topleft', 
+       legend = c(expression(BVCHS2), expression(GMCHS14), expression(MTCHS1), expression(MTCHS2)),
+       lty = 1, col = c("grey", "red", "grey", "grey"), bty = 'n')
+#set legend
+
+#extract EIC and plot
+chr_157.918 <- chromatogram(raw_data, mz = c(157.918, 157.919))
+plot(chr_157.918, col = c("grey", "red", "grey", "grey"))
+
+If you want to know the spectrum of the peak
+first, check the number of the peak
+chromPeaks(xdata_pp, mz = c(243.02, 243.021), ppm = 10)
+second, extract its spectrum
+ex_spectra_243.02_1 <- dda_spectra[mcols(dda_spectra)$peak_id == "CP224"]
+plot(ex_spectra_243.02_1[[1]])
+
+If you want to compare two spectra
+plot(ex_spectra_243.02_1[[1]], ex_spectra_259.02_1[[1]], main="A against B")
+
+If you want to get the similarity of two spectra
+compareSpectra(ex_spectra_243.02_1[[1]],ex_spectra_259.02_1[[1]], binSize = 0.02, fun = "dotproduct")
+
+
+
+
+
+
+
+
+
+
