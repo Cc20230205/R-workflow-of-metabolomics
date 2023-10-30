@@ -1,0 +1,248 @@
+#this file is named Analysis of spectra since the role of it is to compare all MS2 spectra
+
+
+#Understanding of data#
+First of all, we have to know that raw data of MS/MS anlaysis can not be analyzed by R directly.
+Usually, when you open the raw data, you can find profile MS data, like total ion chromatogram (TIC). But the profile MS data can not be recognized by R.
+In fact, R can recognize centriod MS data, so raw data must be converted into centriod data prior to do anlayze with R.
+Generally, centriod MS data is a three-dimensional bar diagram, like a bar diagram with X, Y, Z axis. 
+X axis indicates retention time (rt), 
+Y axis indicates mass to charge (mz),
+Z axis indicates intensity.
+Ideally, different MS1 has different rt, so we could separate each MS1 by comparing their rt.
+
+
+#Conversion of data format#
+Different machine leads to different data format. Please check it before starting your conversion of data format.
+Taking Q Exactive Orbitrap Mass Spectrometers (MS) as an example. Mscovert is used to transform raw data into mzML data format by adding peak picking option.
+Mscovert could be downloaded in ProteoWizard (https://proteowizard.sourceforge.io/)
+
+
+#packages and code#
+Note: this code comes from three places but some changes. Therefore, if you want to study it seriously, seeing their versions is essential:
+1)Dr. Johannes Rainer
+  1) https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms.html#LC-MS_data_pre-processing_and_analysis_with_xcms
+  2) https://bioconductor.org/packages/release/bioc/vignettes/xcms/inst/doc/xcms-lcms-ms.html#LC-MSMS_data_analysis_with_xcms
+2)Thomas Naake and Emmanuel Gaquerel. MetCirc: navigating mass spectral similarity in high-resolution MS/MS metabolomics data. Bioinformatics, 2017.
+3)Tesson et al. DiffCoEx: a simple and sensitive method to find differentially coexpressed gene modules. BMC Bioinformatics 2010.
+
+setwd("D:/Rdata")
+library(xcms)
+library("magrittr")
+library(Spectra)
+
+raw_data <- readMSData("./GA/leaf.mzML", mode = "onDisk")
+#here we just input one sample called leaf. In spite of we could also input several samples at the same time, it would not be helpful for getting MS2 spectrum
+as much as possible.
+
+raw_data <- filterRt(raw_data, c(120, 3500))
+raw_data <- filterMz(raw_data, c(120, 500))
+#you can also select a range of time or mz
+
+table(msLevel(raw_data))
+#check the number of spectra for each MS level
+
+cwp <- CentWaveParam(snthresh = 5, noise = 100, ppm = 10, peakwidth = c(3, 30))
+#parameters:
+  #snthresh: set the signal to noise ratio cutoff 
+  #peakwidth: set the width of a peak, here I set the peakwidth as 3 to 30s. Be careful to the number, which is quite important for the result.
+
+dda_data=findChromPeaks(raw_data, param = cwp)
+#extract peaks
+dda_data@msFeatureData[["chromPeaks"]] %>% head()
+#look at the peaklist
+dda_data@msFeatureData[["chromPeaks"]] %>% nrow()
+#check the number of peaks
+
+mpp <- MergeNeighboringPeaksParam(expandRt = 4)
+#set the parameters of integrating peak
+  #expandRt: expand peakwidth of peak-extracting
+
+xdata_pp <- refineChromPeaks(dda_data, mpp)
+#integrate peaks
+
+xdata <- xdata_pp
+
+pdp <- PeakDensityParam(sampleGroups = c(1), minFraction = 0.4, bw = 30)
+#set the parameters of peak-grouping
+
+xdata_group <- groupChromPeaks(xdata, param = pdp)
+#group peaks
+
+xdata_fill <- fillChromPeaks(xdata_group, param = ChromPeakAreaParam())
+#fill peaks
+
+dda_spectra <- chromPeakSpectra(xdata_fill, method = "closest_rt")
+#extract MS2 spectra
+  #method: choose the method of extracting MS2 spectra. Be careful of the parameter, it's very important.
+
+library(MetCirc)
+similarityMat <- compare_Spectra(dda_spectra, fun=normalizeddotproduct, binSize=0.01)
+#similarityMat: calculate similarity of spectra
+similarityNeu <- compare_Spectra(dda_spectra, fun=neutralloss, binSize=0.01)
+#similarityNeu: calculate similarity of neutral loss of spectra
+
+library(WGCNA)
+library(RColorBrewer)
+library(preprocessCore)
+library(flashClust)
+
+#we create an annotation matrix containing the names of each spectrum id
+anno<-as.matrix(row.names(similarityMat)) 
+rownames(anno)=anno[,1]
+
+#Applying DiffCoEx
+beta1=6 #user defined parameter for soft thresholding
+AdjMatC1<-sign(cor(similarityMat,method="spearman"))*(cor(similarityMat,method="spearman"))^2
+AdjMatC2<-sign(cor(similarityNeu,method="spearman"))*(cor(similarityNeu,method="spearman"))^2
+diag(AdjMatC1)<-0
+diag(AdjMatC2)<-0
+collectGarbage()
+
+dissTOMC1C2=TOMdist((abs(AdjMatC1-AdjMatC2)/2)^(beta1/2))
+collectGarbage()
+
+#Hierarchical clustering is performed using the Topological Overlap of the adjacency difference as input distance matrix
+geneTreeC1C2 = flashClust(as.dist(dissTOMC1C2), method = "average")
+
+# Plot the resulting clustering tree (dendrogram)
+png(file="hierarchicalTree.png",height=500,width=500)
+plot(geneTreeC1C2, xlab="", sub="", main = "Metabolites clustering on TOM-based dissimilarity",labels = FALSE, hang = 0.04)
+
+#We now extract modules from the hierarchical tree. This is done using cutreeDynamic. 
+#Please refer to WGCNA package documentation for details
+dynamicModsHybridC1C2 = cutreeDynamic(dendro = geneTreeC1C2, distM = dissTOMC1C2,method="hybrid",cutHeight=.999,deepSplit = T, pamRespectsDendro = FALSE,minClusterSize = 10)
+
+#Every module is assigned a color. Note that GREY is reserved for genes which do not belong to any differentially coexpressed module
+dynamicColorsHybridC1C2 = labels2colors(dynamicModsHybridC1C2)
+
+#the next step merges clusters which are close (see WGCNA package documentation)
+mergedColorC1C2<-mergeCloseModules(rbind(similarityMat,similarityNeu),dynamicColorsHybridC1C2,cutHeight=.2)$color
+colorh1C1C2<-mergedColorC1C2
+
+#reassign better colors
+colorh1C1C2[which(colorh1C1C2 =="midnightblue")]<-"red"
+
+# Plot the dendrogram and colors underneath
+png(file="module_assignment.png",width=1000,height=1000)
+plotDendroAndColors(geneTreeC1C2, colorh1C1C2, "Hybrid Tree Cut",dendroLabels = FALSE, hang = 0.03,addGuide = TRUE, guideHang = 0.05,main = "Metabolites dendrogram and module colors cells")
+
+#We write each module to an individual file containing affymetrix Metabolites IDs
+##extractModules: a function which uses the module assignment list as input and writes individual files with the Metabolites ids for each module
+extractModules<-function(colorh1,datExpr,anno,write=F,file_prefix="",dir=NULL)
+{
+  module<-list()
+  if (!is.null(dir))
+  {
+    dir.create(dir)
+    file_prefix=paste(dir,"/",file_prefix,sep="")
+  }
+  i<-1
+  for (c in unique(colorh1))
+  {
+    module[[i]]<-(anno[colnames(datExpr)[which(colorh1==c)],1])
+    if (write) {write.table(rownames(anno)[which(colorh1==c)],file=paste(file_prefix,"_",c,".txt",sep=""),quote=F,row.names=F,col.names=F)}
+    i<-i+1
+  }
+  names(module)<-unique(colorh1)
+  module
+}
+##
+modulesC1C2Merged<-extractModules(colorh1C1C2,similarityMat,anno,dir="modules",file_prefix=paste("Output","Specific_module",sep=''),write=T)
+write.table(colorh1C1C2,file="module_assignment.txt",row.names=F,col.names=F,quote=F)
+
+#We plot to a file the comparative heatmap showing correlation changes in the modules
+##EigenGenes : this is used by the plotting function to display close together similar modules based on their eigen values
+getEigenGeneValues<-function(datRef,colorh1,datAll)
+{
+  eigenGenesCoef<-list()
+  i<-0
+  for (c in unique(colorh1))
+  {
+    i<-i+1
+    eigenGenesCoef[[i]]<-prcomp(scale(datRef[,which(colorh1 == c)]))$rotation[,1]
+  }
+  names(eigenGenesCoef)<-unique(colorh1)
+  values<-NULL
+  for( c in unique(colorh1))
+  {
+    v<-rbind(datAll)[,which(colorh1 == c)] %*%  eigenGenesCoef[[c]]
+    values<-cbind(values,sign(mean(v))*v)
+  }
+  colnames(values)<-unique(colorh1)
+  values
+}
+####plotting function for comparative heatmap
+plotC1C2Heatmap<-function(colorh1C1C2,AdjMat1C1,AdjMat1C2, similarityMat, similarityNeu,ordering=NULL,file="DifferentialPlot.png")
+{
+  if (is.null(ordering))
+  {
+    h<-hclust(as.dist(1-abs(cor(getEigenGeneValues(similarityMat[,which(colorh1C1C2!="grey")],colorh1C1C2[which(colorh1C1C2!="grey")],rbind(similarityMat,similarityNeu)[,which(colorh1C1C2!="grey")])))))
+    for (c in h$label[h$order])
+    {
+      ordering<-c(ordering,which(colorh1C1C2 ==c))
+    }
+  }
+  mat_tmp<-(AdjMat1C1[ordering,ordering])
+  mat_tmp[which(row(mat_tmp)>col(mat_tmp))]<-(AdjMat1C2[ordering,ordering][which(row(mat_tmp)>col(mat_tmp))])
+  diag(mat_tmp)<-0
+  mat_tmp<-sign(mat_tmp)*abs(mat_tmp)^(1/2)
+  png(file=file,height=1000,width=1000)
+  image(mat_tmp,col=rev(brewer.pal(11,"RdYlBu")),axes=F,asp=1,breaks=seq(-1,1,length.out=12))
+  dev.off()
+  unique(colorh1C1C2[ordering])
+}
+
+##This function plots side by side the color bar of module assignments, and the change in mean expression of the modules between the two conditions.
+plotExprChange<-function(similarityMat,similarityNeu, colorhC1C2,ordering=NULL)
+{
+  if (is.null(ordering))
+  {
+    h<-hclust(as.dist(1-abs(cor(getEigenGeneValues(similarityMat[,which(colorh1C1C2!="grey")],colorh1C1C2[which(colorh1C1C2!="grey")],rbind(similarityMat,similarityNeu)[,which(colorh1C1C2!="grey")])))))
+    for (c in h$label[h$order])
+    {
+      ordering<-c(ordering,which(colorh1C1C2 ==c))
+    }
+  }
+  mycolors<-colorh1C1C2[ordering]
+  plot(x=0:length(which(mycolors!="grey")),y=rep(1,length(which(mycolors!="grey"))+1),col="white",axes=F,xlab="",ylab="",ylim=c(0,1))
+  rr=c(244,239,225,215,209,193,181,166,151,130,110)
+  gg=c(228,204,174,160,146,117,94,58,44,45,45)
+  bb=c(176,140,109,105,102,91,84,74,70,68,66)
+  MyColours<-NULL
+  for ( i in 1:11)
+  {
+    MyColours=c(MyColours,rgb(rr[i],gg[i],bb[i],maxColorValue=255)  )
+  }
+  exprDiff<-NULL
+  l<-0
+  for (c in setdiff(unique(mycolors),"grey"))
+  {
+    meanC1<-mean(t(similarityMat)[colnames(similarityMat)[which(colorh1C1C2 == c)],])
+    meanC2<-mean(t(similarityNeu)[colnames(similarityNeu)[which(colorh1C1C2 == c)],])
+    exprDiff<-rbind(exprDiff,c(meanC1,meanC2))
+    r<-l+length(which(mycolors==c))
+    rect(l,0.85,r,1,col=c,border=F)
+    rect(l,0,r,.4,col=MyColours[floor(meanC2*2)-10],border="white",lwd=2)
+    rect(l,0.4,r,.8,col=MyColours[floor(meanC1*2)-10],border="white",lwd=2)
+    l<-r
+  }
+  exprDiff
+}
+##
+
+plotC1C2Heatmap(colorh1C1C2,AdjMatC1,AdjMatC2, similarityMat, similarityNeu)
+png(file="exprChange.png",height=500,width=500)
+plotExprChange(similarityMat,similarityNeu,colorh1C1C2)
+write.csv(row.names(similarityMat), file = "all_module_name.csv")
+
+
+
+
+
+
+
+
+
+
+
